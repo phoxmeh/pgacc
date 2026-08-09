@@ -603,8 +603,18 @@ private fun LabeledSlider(
     steps: Int = 0,
     onSet: (Int) -> Unit,
 ) {
-    var local by remember(value) { mutableIntStateOf(value) }
+    var local by remember { mutableIntStateOf(value) }
+    var lastTapMs by remember { mutableLongStateOf(0L) }
     val step = if (steps > 0) ((max - min) / (steps + 1)).coerceAtLeast(1) else 1
+
+    // Sync external state into local, but suppress for 800ms after a step-button tap so
+    // poll cycles can't snap the display back before the radio has applied the command.
+    LaunchedEffect(value) {
+        if (System.currentTimeMillis() - lastTapMs > 800L) {
+            local = value
+        }
+    }
+
     Row(
         modifier          = Modifier.fillMaxWidth().padding(vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -613,6 +623,7 @@ private fun LabeledSlider(
             modifier = Modifier.width(44.dp), textAlign = TextAlign.End)
         Spacer(Modifier.width(6.dp))
         SliderStepBtn("−") {
+            lastTapMs = System.currentTimeMillis()
             local = (local - step).coerceIn(min, max)
             onSet(local)
         }
@@ -626,6 +637,7 @@ private fun LabeledSlider(
             colors               = sliderColors(),
         )
         SliderStepBtn("+") {
+            lastTapMs = System.currentTimeMillis()
             local = (local + step).coerceIn(min, max)
             onSet(local)
         }

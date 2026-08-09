@@ -143,8 +143,9 @@ class YaesuCatDriver(
 
     override suspend fun setIfShift(hz: Int): Result<Unit> {
         // IS format: IS0 P2(0/1 on/off) sign 4-digits ;  e.g. "IS01+1000;"
+        // Per flrig set_if_shift: P2='1' whenever val≠0, '0' only when val==0.
         val v = hz.coerceIn(-1200, 1200)
-        val on = if (_state.value.ifShiftEnabled) "1" else "0"
+        val on = if (v != 0) "1" else "0"
         val sign = if (v >= 0) "+" else "-"
         return sendSet("IS0$on$sign%04d;".format(kotlin.math.abs(v))).map {
             updateState { copy(ifShift = v) }
@@ -329,6 +330,24 @@ class YaesuCatDriver(
                 r.drop(3).dropLast(1).toIntOrNull()?.let { v -> updateState { copy(alcMeter = v) } }
             }
         }
+        // Bandwidth — SH0 response: SH0 P2(on/off) P3(2 digits) ;  = 7 chars total.
+        // Skip AM/FM family (no SH filter control on FT-891).
+        val bwMode = _state.value.mode
+        if (bwMode !in setOf(
+                RadioMode.FM, RadioMode.FMN, RadioMode.WFM,
+                RadioMode.AM, RadioMode.AMN, RadioMode.C4FM, RadioMode.PKTFM,
+            )
+        ) {
+            sendCommand("SH0;").getOrDefault("").let { r ->
+                if (r.startsWith("SH0") && r.length >= 7) {
+                    r.substring(4, 6).toIntOrNull()?.let { p3 ->
+                        yaesuP3ToBandwidth(p3, bwMode)?.let { hz ->
+                            updateState { copy(bandwidth = hz) }
+                        }
+                    }
+                }
+            }
+        }
         // IS answer: IS0 P2(on/off) sign 4-digit-Hz ;  e.g. "IS01+1000;"
         sendCommand("IS0;").getOrDefault("").let { r ->
             if (r.startsWith("IS0") && r.length >= 10) {
@@ -364,6 +383,23 @@ class YaesuCatDriver(
                 if (c != null) {
                     val m = yaesuModeWithSideband(c)
                     updateState { copy(mode = m) }
+                }
+            }
+        }
+        // Bandwidth — SH0 response: SH0 P2(on/off) P3(2 digits) ; = 7 chars total.
+        val initBwMode = _state.value.mode
+        if (initBwMode !in setOf(
+                RadioMode.FM, RadioMode.FMN, RadioMode.WFM,
+                RadioMode.AM, RadioMode.AMN, RadioMode.C4FM, RadioMode.PKTFM,
+            )
+        ) {
+            sendCommand("SH0;").getOrDefault("").let { r ->
+                if (r.startsWith("SH0") && r.length >= 7) {
+                    r.substring(4, 6).toIntOrNull()?.let { p3 ->
+                        yaesuP3ToBandwidth(p3, initBwMode)?.let { hz ->
+                            updateState { copy(bandwidth = hz) }
+                        }
+                    }
                 }
             }
         }
@@ -553,6 +589,27 @@ class YaesuCatDriver(
         'C' -> RadioMode.PKTUSB
         'D' -> RadioMode.AMN
         else -> RadioMode.USB  // 'A' is reserved/unused
+    }
+
+    // Reverse of yaesuBandwidthToP3: given a P3 code from SH0 response, returns Hz or null.
+    private fun yaesuP3ToBandwidth(p3: Int, mode: RadioMode): Int? = when (mode) {
+        RadioMode.LSB, RadioMode.USB -> when (p3) {
+            1  -> 200;  2  -> 400;  3  -> 600;  4  -> 850
+            5  -> 1100; 6  -> 1350; 7  -> 1500; 8  -> 1650
+            9  -> 1800; 10 -> 1950; 11 -> 2100; 12 -> 2200
+            13 -> 2300; 14 -> 2400; 15 -> 2500; 16 -> 2600
+            17 -> 2700; 18 -> 2800; 19 -> 2900; 20 -> 3000; 21 -> 3200
+            else -> null
+        }
+        RadioMode.CW, RadioMode.CWR, RadioMode.RTTY, RadioMode.RTTYR,
+        RadioMode.PKTLSB, RadioMode.PKTUSB -> when (p3) {
+            1  -> 50;   2  -> 100;  3  -> 150;  4  -> 200;  5  -> 250
+            6  -> 300;  7  -> 350;  8  -> 400;  9  -> 450;  10 -> 500
+            11 -> 800;  12 -> 1200; 13 -> 1400; 14 -> 1700; 15 -> 2000
+            16 -> 2400; 17 -> 3000
+            else -> null
+        }
+        else -> null
     }
 
     // Returns SH P3 code for the given bandwidth + mode, or -1 if SH has no effect in this mode.

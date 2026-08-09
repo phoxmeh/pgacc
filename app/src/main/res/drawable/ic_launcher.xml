@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:fillColor="#111111"
+        android:pathData="M0,0h108v108H0z"/>
+    <!-- Radio dial circle -->
+    <path android:fillColor="#FFAA00"
+        android:pathData="M54,54m-38,0a38,38 0,1 1,76 0a38,38 0,1 1,-76 0"/>
+    <path android:fillColor="#111111"
+        android:pathData="M54,54m-30,0a30,30 0,1 1,60 0a30,30 0,1 1,-60 0"/>
+    <!-- Frequency needle -->
+    <path android:fillColor="#FFAA00" android:strokeWidth="2"
+        android:pathData="M54,54 L54,26"/>
+    <!-- S-meter arc segments -->
+    <path android:strokeColor="#00FF66" android:strokeWidth="3" android:fillColor="@android:color/transparent"
+        android:pathData="M32,68 A26,26 0,0,1 76,68"/>
+    <!-- Center dot -->
+    <path android:fillColor="#FFAA00"
+        android:pathData="M54,54m-4,0a4,4 0,1 1,8 0a4,4 0,1 1,-8 0"/>
+</vector>

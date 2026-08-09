@@ -1,0 +1,3 @@
+-keep class com.hoho.android.usbserial.** { *; }
+-keep class com.catcontroller.radio.RadioDeviceList { *; }
+-keep class com.catcontroller.model.** { *; }

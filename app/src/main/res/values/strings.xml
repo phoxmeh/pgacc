@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">CAT Controller</string>
+    <string name="usb_permission_granted">USB permission granted</string>
+    <string name="usb_permission_denied">USB permission denied</string>
+    <string name="usb_device_attached">USB device attached</string>
+    <string name="usb_device_detached">USB device detached</string>
+    <string name="connecting">Connecting…</string>
+    <string name="connected">Connected</string>
+    <string name="disconnected">Disconnected</string>
+    <string name="error_no_usb_device">No USB device found</string>
+    <string name="error_connection_failed">Connection failed</string>
+    <string name="ptt_label">PTT</string>
+    <string name="settings_title">Settings</string>
+    <string name="profiles_title">Profiles</string>
+</resources>

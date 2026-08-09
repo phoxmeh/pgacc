@@ -40,8 +40,33 @@ class MainViewModel @Inject constructor(
     private val _capsOverride = MutableStateFlow<RigCaps?>(null)
     private var capsJob: Job? = null
 
+    private val _isTuning = MutableStateFlow(false)
+    val isTuning: StateFlow<Boolean> = _isTuning.asStateFlow()
+    private var preTuneMode: RadioMode? = null
+    private var preTunePower: Int? = null
+
     val caps: StateFlow<RigCaps> = combine(activeDevice, _capsOverride) { device, override ->
-        override ?: device?.caps ?: RigCaps()
+        val static = device?.caps ?: RigCaps()
+        if (override == null) {
+            static
+        } else {
+            // Dynamic caps (dump_caps) have accurate mode list + feature flags.
+            // Static caps have the full per-radio filter table (hamlib filter_list).
+            // dump_caps Bandwidths section only reports 3 canonical values (Normal/Narrow/Wide),
+            // so prefer the static list for any mode where it has more entries.
+            val bws = buildMap<RadioMode, List<Int>> {
+                putAll(override.bandwidthsByMode)
+                static.bandwidthsByMode.forEach { (mode, staticBws) ->
+                    val dyn = get(mode)
+                    if (dyn == null || staticBws.size > dyn.size) put(mode, staticBws)
+                }
+            }
+            override.copy(
+                bandwidthsByMode   = bws,
+                hasBandwidth       = bws.isNotEmpty(),
+                modeDisplayLabels  = static.modeDisplayLabels,
+            )
+        }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), RigCaps())
 
     val profiles = profileRepo.profiles.stateIn(
@@ -196,6 +221,33 @@ class MainViewModel @Inject constructor(
     fun setCompLevel(l: Int)              = viewModelScope.launch { driver?.setSpeechProcLevel(l) }
     fun setVox(on: Boolean)               = viewModelScope.launch { driver?.setVox(on) }
     fun setTuner(on: Boolean)             = viewModelScope.launch { driver?.setTuner(on) }
+    fun startTuning() {
+        if (_isTuning.value) return
+        val state = _driverState.value
+        preTuneMode  = state.mode
+        preTunePower = state.rfPower
+        _isTuning.value = true
+        viewModelScope.launch {
+            driver?.setRfPower(state.rfPower.coerceAtMost(10).coerceAtLeast(1))
+            driver?.setMode(RadioMode.CW)
+            driver?.setPtt(true)
+        }
+    }
+
+    fun stopTuning() {
+        if (!_isTuning.value) return
+        val savedMode  = preTuneMode
+        val savedPower = preTunePower
+        _isTuning.value = false
+        preTuneMode  = null
+        preTunePower = null
+        viewModelScope.launch {
+            driver?.setPtt(false)
+            if (savedMode  != null) driver?.setMode(savedMode)
+            if (savedPower != null) driver?.setRfPower(savedPower)
+        }
+    }
+
     fun startTune()                       = viewModelScope.launch { driver?.startTune() }
     fun setAntenna(p: Int)               = viewModelScope.launch { driver?.setAntenna(p) }
     fun setCwSpeed(w: Int)                = viewModelScope.launch { driver?.setCwSpeed(w) }

@@ -14,6 +14,9 @@ data class RigCaps(
         RadioMode.CW, RadioMode.CWR, RadioMode.RTTY, RadioMode.RTTYR,
         RadioMode.PKTLSB, RadioMode.PKTUSB, RadioMode.PKTFM, RadioMode.FMN,
     ),
+    // Per-rig display label overrides (flrig naming convention).
+    // UI shows caps.modeDisplayLabels[mode] ?: mode.displayLabel.
+    val modeDisplayLabels: Map<RadioMode, String> = emptyMap(),
     val hasNoiseBlanker: Boolean = true,
     val hasNoiseReduction: Boolean = true,
     val hasAutoNotch: Boolean = true,
@@ -62,22 +65,49 @@ private val yaesuBasic = RigCaps(
     hasSquelch = false, hasAgc = true, hasSplit = true, hasBandwidth = false,
 )
 
-// Yaesu FT-891 — hamlib ft891.c (FT891_ALL_RX_MODES, FT891_FUNCS)
-// No PKTFM (DATA-FM), no RIT in FUNCS, only 12 dB ATT, IPO+P1 preamp, ANT1/ANT2 via AN command
-private val ft891SsbBw = listOf(200, 400, 600, 850, 1100, 1350, 1500, 1650,
-    1800, 1950, 2100, 2200, 2300, 2400, 2500, 2600, 2700, 2800, 2900, 3000, 3200)
-private val ft891CwBw  = listOf(50, 100, 150, 200, 250, 300, 350, 400, 450,
-    500, 800, 1200, 1400, 1700, 2000, 2400)
+// ── Yaesu FT-891 — sourced from flrig FT891.cxx ─────────────────────────────
+// Mode list, bandwidth tables, and feature flags match flrig exactly.
+// Mode order follows FT891_mode_chr: '1'..'D' (the radio's MD command codes).
+
+// flrig: vFT891modes_ display labels keyed by RadioMode (hamlib enum value)
+private val ft891ModeLabels = mapOf(
+    RadioMode.LSB    to "LSB",
+    RadioMode.USB    to "USB",
+    RadioMode.CW     to "CW-U",    // MD '3'
+    RadioMode.FM     to "FM",
+    RadioMode.AM     to "AM",
+    RadioMode.RTTYR  to "RTTY-L",  // MD '6'
+    RadioMode.CWR    to "CW-L",    // MD '7'
+    RadioMode.PKTLSB to "DATA-L",  // MD '8'
+    RadioMode.RTTY   to "RTTY-U",  // MD '9'
+    RadioMode.FMN    to "FM-N",    // MD 'B'
+    RadioMode.PKTUSB to "DATA-U",  // MD 'C'
+    RadioMode.AMN    to "AM-N",    // MD 'D'
+)
+
+// flrig: vFT891_widths_SSB — SH codes 01–21
+private val ft891SsbBw = listOf(
+    200, 400, 600, 850, 1100, 1350, 1500, 1650, 1800, 1950,
+    2100, 2200, 2300, 2400, 2500, 2600, 2700, 2800, 2900, 3000, 3200,
+)
+
+// flrig: vFT891_widths_CW and vFT891_widths_SSBD — both use SH codes 01–17
+// CW/RTTY-U/RTTY-L use this table; DATA-U/DATA-L use the same values (SSBD table)
+private val ft891CwBw = listOf(
+    50, 100, 150, 200, 250, 300, 350, 400, 450, 500,
+    800, 1200, 1400, 1700, 2000, 2400, 3000,
+)
 
 private val ft891Caps = RigCaps(
     modes = listOf(
-        RadioMode.LSB, RadioMode.USB,
-        RadioMode.AM, RadioMode.AMN,
-        RadioMode.FM, RadioMode.FMN,
-        RadioMode.CW, RadioMode.CWR,
-        RadioMode.RTTY, RadioMode.RTTYR,
-        RadioMode.PKTLSB, RadioMode.PKTUSB,
+        RadioMode.LSB,    RadioMode.USB,
+        RadioMode.CWR,    RadioMode.CW,     // CW-L, CW-U
+        RadioMode.RTTYR,  RadioMode.RTTY,   // RTTY-L, RTTY-U
+        RadioMode.PKTLSB, RadioMode.PKTUSB, // DATA-L, DATA-U
+        RadioMode.FM,     RadioMode.FMN,
+        RadioMode.AM,     RadioMode.AMN,
     ),
+    modeDisplayLabels = ft891ModeLabels,
     hasNoiseBlanker = true,  hasNoiseReduction = true, hasAutoNotch = true,
     hasIfShift = true,       hasRit = true, hasSpeechProc = true, hasSpeechProcLevel = true,
     hasVox = true,           hasTuner = true,
@@ -88,12 +118,13 @@ private val ft891Caps = RigCaps(
     bandwidthsByMode = mapOf(
         RadioMode.LSB    to ft891SsbBw,
         RadioMode.USB    to ft891SsbBw,
-        RadioMode.PKTLSB to ft891SsbBw,
-        RadioMode.PKTUSB to ft891SsbBw,
         RadioMode.CW     to ft891CwBw,
         RadioMode.CWR    to ft891CwBw,
         RadioMode.RTTY   to ft891CwBw,
         RadioMode.RTTYR  to ft891CwBw,
+        RadioMode.PKTLSB to ft891CwBw,  // flrig SSBD table — same values as CW
+        RadioMode.PKTUSB to ft891CwBw,  // flrig SSBD table — same values as CW
+        // AM/AMN, FM/FMN: bandwidth is implicit in the mode itself, no SH control
     ),
 )
 

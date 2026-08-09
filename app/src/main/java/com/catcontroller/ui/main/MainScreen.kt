@@ -33,6 +33,7 @@ fun MainScreen(
     val profile    by vm.activeProfile.collectAsStateWithLifecycle()
     val hasPttPort by vm.hasPttPort.collectAsStateWithLifecycle()
     val caps       by vm.caps.collectAsStateWithLifecycle()
+    val isTuning   by vm.isTuning.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(state.error) {
@@ -59,8 +60,11 @@ fun MainScreen(
                 hasPttPort    = hasPttPort,
                 pttConnected  = state.pttConnected,
                 pttConnecting = state.pttConnecting,
+                isTuning      = isTuning,
                 onConnect     = { if (state.connected) vm.disconnect() else vm.connect() },
                 onPtt         = { if (state.pttConnected) vm.disconnectPtt() else vm.connectPtt() },
+                onStartTune   = vm::startTuning,
+                onStopTune    = vm::stopTuning,
                 onProfiles    = onNavigateProfiles,
                 onSettings    = onNavigateSettings,
             )
@@ -98,19 +102,25 @@ fun MainScreen(
                     .verticalScroll(rememberScrollState()),
             ) {
                 ModeRow(
-                    modes       = caps.modes,
-                    hasBandwidth= caps.hasBandwidth,
-                    mode        = state.mode,
-                    bandwidth   = state.bandwidth,
-                    bandwidths  = caps.bandwidthsByMode[state.mode] ?: emptyList(),
-                    onMode      = vm::setMode,
-                    onBw        = vm::setBandwidth,
+                    modes             = caps.modes,
+                    modeDisplayLabels = caps.modeDisplayLabels,
+                    hasBandwidth      = caps.hasBandwidth,
+                    mode              = state.mode,
+                    bandwidth         = state.bandwidth,
+                    bandwidths        = caps.bandwidthsByMode[state.mode] ?: emptyList(),
+                    onMode            = vm::setMode,
+                    onBw              = vm::setBandwidth,
                 )
 
+                val isFmMode = state.mode in setOf(RadioMode.FM, RadioMode.FMN, RadioMode.WFM, RadioMode.C4FM)
                 CardSection {
                     LabeledSlider("PWR", state.rfPower, 5, 100, "%3dW") { vm.setRfPower(it) }
                     LabeledSlider("AF",  state.afGain,  0, 100, "%3d")  { vm.setAfGain(it) }
-                    if (caps.hasSquelch) LabeledSlider("SQL", state.squelch, 0, 100, "%3d") { vm.setSquelch(it) }
+                    if (isFmMode) {
+                        if (caps.hasSquelch) LabeledSlider("SQL", state.squelch, 0, 100, "%3d") { vm.setSquelch(it) }
+                    } else {
+                        if (caps.hasRfGain) LabeledSlider("RF",  state.rfGain,  0, 100, "%3d") { vm.setRfGain(it) }
+                    }
                 }
 
                 PreampAttRow(
@@ -138,10 +148,12 @@ fun MainScreen(
                                 state.ifShiftEnabled,
                             ) { vm.setIfShiftEnabled(!state.ifShiftEnabled) }
                         }
-                        // steps = 239: range -1200..+1200 = 2400Hz / 10Hz per step = 240 positions
-                        LabeledSlider(
-                            "SHIFT", state.ifShift, -1200, 1200, "%+dHz", steps = 239,
-                        ) { vm.setIfShift(it) }
+                        if (state.ifShiftEnabled) {
+                            // steps = 239: range -1200..+1200 = 2400Hz / 10Hz per step = 240 positions
+                            LabeledSlider(
+                                "SHIFT", state.ifShift, -1200, 1200, "%+dHz", steps = 239,
+                            ) { vm.setIfShift(it) }
+                        }
                     }
                 }
 
@@ -210,8 +222,11 @@ private fun TopBar(
     hasPttPort: Boolean,
     pttConnected: Boolean,
     pttConnecting: Boolean,
+    isTuning: Boolean,
     onConnect: () -> Unit,
     onPtt: () -> Unit,
+    onStartTune: () -> Unit,
+    onStopTune: () -> Unit,
     onProfiles: () -> Unit,
     onSettings: () -> Unit,
 ) {
@@ -229,6 +244,11 @@ private fun TopBar(
                 maxLines = 1)
         }
         Spacer(Modifier.weight(1f))
+
+        if (pttConnected) {
+            TuneButton(tuning = isTuning, onPress = onStartTune, onRelease = onStopTune)
+            Spacer(Modifier.width(4.dp))
+        }
 
         TopBarButton(
             label   = "CAT",
@@ -249,6 +269,47 @@ private fun TopBar(
 
         IconButton(onClick = onSettings, modifier = Modifier.size(36.dp)) {
             Icon(Icons.Default.Settings, "Settings", tint = Muted, modifier = Modifier.size(18.dp))
+        }
+    }
+}
+
+@Composable
+private fun TuneButton(
+    tuning: Boolean,
+    onPress: () -> Unit,
+    onRelease: () -> Unit,
+) {
+    val bgColor   by animateColorAsState(if (tuning) BtnPttActive else Color(0xFF2A2A2A), label = "tune_bg")
+    val textColor by animateColorAsState(if (tuning) Color.White  else Muted,             label = "tune_txt")
+    Surface(
+        modifier = Modifier
+            .height(28.dp)
+            .clip(RoundedCornerShape(5.dp))
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        when {
+                            event.changes.any { it.pressed && !it.previousPressed }  -> onPress()
+                            event.changes.any { !it.pressed && it.previousPressed }  -> onRelease()
+                        }
+                        event.changes.forEach { it.consume() }
+                    }
+                }
+            },
+        color = bgColor,
+        shape = RoundedCornerShape(5.dp),
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier         = Modifier.padding(horizontal = 10.dp),
+        ) {
+            Text(
+                if (tuning) "● TX" else "TUNE",
+                color      = textColor,
+                fontSize   = 12.sp,
+                fontWeight = FontWeight.Bold,
+            )
         }
     }
 }
@@ -465,6 +526,7 @@ private fun bwLabel(bw: Int) = if (bw >= 1000) "${bw / 1000}.${(bw % 1000) / 100
 @Composable
 private fun ModeRow(
     modes: List<RadioMode>,
+    modeDisplayLabels: Map<RadioMode, String>,
     hasBandwidth: Boolean,
     mode: RadioMode,
     bandwidth: Int,
@@ -478,7 +540,7 @@ private fun ModeRow(
             horizontalArrangement = Arrangement.spacedBy(5.dp),
         ) {
             modes.forEach { m ->
-                ToggleChip(m.label, mode == m) { onMode(m) }
+                ToggleChip(modeDisplayLabels[m] ?: m.displayLabel, mode == m) { onMode(m) }
             }
         }
         if (hasBandwidth && bandwidths.isNotEmpty()) {
@@ -542,13 +604,18 @@ private fun LabeledSlider(
     onSet: (Int) -> Unit,
 ) {
     var local by remember(value) { mutableIntStateOf(value) }
+    val step = if (steps > 0) ((max - min) / (steps + 1)).coerceAtLeast(1) else 1
     Row(
         modifier          = Modifier.fillMaxWidth().padding(vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(label, color = Muted, fontSize = 12.sp,
             modifier = Modifier.width(44.dp), textAlign = TextAlign.End)
-        Spacer(Modifier.width(8.dp))
+        Spacer(Modifier.width(6.dp))
+        SliderStepBtn("−") {
+            local = (local - step).coerceIn(min, max)
+            onSet(local)
+        }
         Slider(
             value                = local.toFloat(),
             onValueChange        = { local = it.roundToInt() },
@@ -558,7 +625,11 @@ private fun LabeledSlider(
             modifier             = Modifier.weight(1f),
             colors               = sliderColors(),
         )
-        Spacer(Modifier.width(8.dp))
+        SliderStepBtn("+") {
+            local = (local + step).coerceIn(min, max)
+            onSet(local)
+        }
+        Spacer(Modifier.width(6.dp))
         Text(
             fmt.format(local),
             color      = OnSurface,
@@ -566,6 +637,20 @@ private fun LabeledSlider(
             fontFamily = FontFamily.Monospace,
             modifier   = Modifier.width(60.dp),
         )
+    }
+}
+
+@Composable
+private fun SliderStepBtn(label: String, onClick: () -> Unit) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier         = Modifier
+            .size(28.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .background(Color(0xFF2A2A2A))
+            .clickable(onClick = onClick),
+    ) {
+        Text(label, color = OnSurface, fontSize = 16.sp, fontWeight = FontWeight.Bold)
     }
 }
 

@@ -60,9 +60,12 @@ class YaesuCatDriver(
     }
 
     override suspend fun setMode(mode: RadioMode, bandwidth: Int): Result<Unit> {
-        return sendSet("MD0${yaesuModeCode(mode)};").map {
-            updateState { copy(mode = mode) }
-        }
+        sendSet("MD0${yaesuModeCode(mode)};")
+        // FT-891 uses a separate EX sideband register to distinguish L/U within CW/RTTY/DATA.
+        // MD alone is not sufficient; without EX the radio applies the last-saved menu preference.
+        yaesuSidebandCmd(mode)?.let { sendSet(it) }
+        updateState { copy(mode = mode) }
+        return Result.success(Unit)
     }
 
     override suspend fun setBandwidth(bw: Int): Result<Unit> {
@@ -75,8 +78,9 @@ class YaesuCatDriver(
         // P3 codes 10+ (SSB) / 11+ (CW) only exist in the wide bank.
         // Set NA first so the target P3 code is valid in the current bank.
         val useNarrow = when (mode) {
-            RadioMode.LSB, RadioMode.USB, RadioMode.PKTLSB, RadioMode.PKTUSB -> bw <= 1800
-            RadioMode.CW, RadioMode.CWR, RadioMode.RTTY, RadioMode.RTTYR     -> bw <= 500
+            RadioMode.LSB, RadioMode.USB -> bw <= 1800
+            RadioMode.CW, RadioMode.CWR, RadioMode.RTTY, RadioMode.RTTYR,
+            RadioMode.PKTLSB, RadioMode.PKTUSB                              -> bw <= 500
             else -> false
         }
         sendSet("NA0${if (useNarrow) 1 else 0};")
@@ -297,8 +301,13 @@ class YaesuCatDriver(
                 r.substring(2, r.length - 1).toLongOrNull()?.let { f -> updateState { copy(freqB = f) } }
         }
         sendCommand("MD0;").getOrDefault("").let { r ->
-            if (r.startsWith("MD") && r.length >= 4)
-                r.getOrNull(3)?.let { c -> updateState { copy(mode = yaesuModeFromCode(c)) } }
+            if (r.startsWith("MD") && r.length >= 4) {
+                val c = r.getOrNull(3)
+                if (c != null) {
+                    val m = yaesuModeWithSideband(c)
+                    updateState { copy(mode = m) }
+                }
+            }
         }
         sendCommand("TX;").getOrDefault("").let { r ->
             // TX answer: 0=RX, 1=CAT TX, 2=front-panel/VOX TX
@@ -350,8 +359,13 @@ class YaesuCatDriver(
         }
         // Mode
         sendCommand("MD0;").getOrDefault("").let { r ->
-            if (r.startsWith("MD") && r.length >= 4)
-                r.getOrNull(3)?.let { c -> updateState { copy(mode = yaesuModeFromCode(c)) } }
+            if (r.startsWith("MD") && r.length >= 4) {
+                val c = r.getOrNull(3)
+                if (c != null) {
+                    val m = yaesuModeWithSideband(c)
+                    updateState { copy(mode = m) }
+                }
+            }
         }
         // RF power (PC, 005–100W)
         sendCommand("PC;").getOrDefault("").let { r ->
@@ -475,6 +489,37 @@ class YaesuCatDriver(
         }
     }
 
+    // EX sideband register: sets/reads which sideband CW/RTTY/DATA uses.
+    // Must be sent in addition to MD, because the radio ignores L/U in MD without it.
+    // Source: flrig FT891.cxx set_sideband() / get_sideband()
+    private fun yaesuSidebandCmd(mode: RadioMode): String? = when (mode) {
+        RadioMode.CW     -> "EX07070;"  // CW normal (USB)
+        RadioMode.CWR    -> "EX07071;"  // CW reverse (LSB)
+        RadioMode.RTTY   -> "EX10110;"  // RTTY-U
+        RadioMode.RTTYR  -> "EX10111;"  // RTTY-L
+        RadioMode.PKTUSB -> "EX08120;"  // DATA-U
+        RadioMode.PKTLSB -> "EX08121;"  // DATA-L
+        else             -> null
+    }
+
+    // Reads EX sideband register; returns 1 = LSB/reverse, 0 = USB/normal.
+    // Response format: EX + 4-digit menu code + 1-digit value + ';' = 8 chars.
+    private suspend fun yaesuGetSideband(exCmd: String): Int {
+        val r = sendCommand(exCmd).getOrDefault("")
+        val p = r.indexOf("EX")
+        return if (p != -1 && p + 6 < r.length) r[p + 6] - '0' else 0
+    }
+
+    // Reads mode code from radio and resolves CW/RTTY/DATA L vs U via EX register.
+    // Both '3'/'7' can mean CW, '6'/'9' can mean RTTY, '8'/'C' can mean DATA —
+    // the actual sideband is in the EX register, not the MD code alone.
+    private suspend fun yaesuModeWithSideband(c: Char): RadioMode = when (c.uppercaseChar()) {
+        '3', '7' -> if (yaesuGetSideband("EX0707;") == 1) RadioMode.CWR    else RadioMode.CW
+        '6', '9' -> if (yaesuGetSideband("EX1011;") == 1) RadioMode.RTTYR  else RadioMode.RTTY
+        '8', 'C' -> if (yaesuGetSideband("EX0812;") == 1) RadioMode.PKTLSB else RadioMode.PKTUSB
+        else     -> yaesuModeFromCode(c)
+    }
+
     // FT-891 MD command mode codes (from CAT manual page 11 + MR table page 12):
     // 1=LSB 2=USB 3=CW 4=FM 5=AM 6=RTTY-L 7=CW-R 8=DATA-L 9=RTTY-U
     // A=reserved/unused  B=FM-N  C=DATA-U  D=AM-N
@@ -484,10 +529,10 @@ class YaesuCatDriver(
         RadioMode.CW     -> "3"
         RadioMode.FM     -> "4"
         RadioMode.AM     -> "5"
-        RadioMode.RTTY   -> "6"
+        RadioMode.RTTYR  -> "6"
         RadioMode.CWR    -> "7"
         RadioMode.PKTLSB -> "8"
-        RadioMode.RTTYR  -> "9"
+        RadioMode.RTTY   -> "9"
         RadioMode.FMN    -> "B"
         RadioMode.PKTUSB -> "C"
         RadioMode.AMN    -> "D"
@@ -500,10 +545,10 @@ class YaesuCatDriver(
         '3' -> RadioMode.CW
         '4' -> RadioMode.FM
         '5' -> RadioMode.AM
-        '6' -> RadioMode.RTTY
+        '6' -> RadioMode.RTTYR
         '7' -> RadioMode.CWR
         '8' -> RadioMode.PKTLSB
-        '9' -> RadioMode.RTTYR
+        '9' -> RadioMode.RTTY
         'B' -> RadioMode.FMN
         'C' -> RadioMode.PKTUSB
         'D' -> RadioMode.AMN
@@ -513,22 +558,23 @@ class YaesuCatDriver(
     // Returns SH P3 code for the given bandwidth + mode, or -1 if SH has no effect in this mode.
     // P3=0 means "use default" (no filter change). Source: FT-891 CAT manual SH command table.
     private fun yaesuBandwidthToP3(bw: Int, mode: RadioMode): Int = when (mode) {
-        RadioMode.LSB, RadioMode.USB, RadioMode.PKTLSB, RadioMode.PKTUSB -> when (bw) {
-            // SSB/DATA narrow: 01-09 (200–1800 Hz)
+        RadioMode.LSB, RadioMode.USB -> when (bw) {
+            // SSB narrow: 01-09 (200–1800 Hz)
             200  -> 1;  400  -> 2;  600  -> 3;  850  -> 4
             1100 -> 5;  1350 -> 6;  1500 -> 7;  1650 -> 8
-            // SSB/DATA wide:  09-21 (1800–3200 Hz)
+            // SSB wide:  09-21 (1800–3200 Hz)
             1800 -> 9;  1950 -> 10; 2100 -> 11; 2200 -> 12
             2300 -> 13; 2400 -> 14; 2500 -> 15; 2600 -> 16
             2700 -> 17; 2800 -> 18; 2900 -> 19; 3000 -> 20; 3200 -> 21
             else -> 0
         }
-        RadioMode.CW, RadioMode.CWR, RadioMode.RTTY, RadioMode.RTTYR -> when (bw) {
-            // CW/RTTY narrow: 01-10 (50–500 Hz)
+        RadioMode.CW, RadioMode.CWR, RadioMode.RTTY, RadioMode.RTTYR,
+        RadioMode.PKTLSB, RadioMode.PKTUSB -> when (bw) {
+            // CW/RTTY/DATA narrow: 01-10 (50–500 Hz)
             50   -> 1;  100  -> 2;  150  -> 3;  200  -> 4;  250  -> 5
             300  -> 6;  350  -> 7;  400  -> 8;  450  -> 9;  500  -> 10
-            // CW/RTTY wide:  10-16 (500–2400 Hz)
-            800  -> 11; 1200 -> 12; 1400 -> 13; 1700 -> 14; 2000 -> 15; 2400 -> 16
+            // CW/RTTY/DATA wide:  11-17 (800–3000 Hz)
+            800  -> 11; 1200 -> 12; 1400 -> 13; 1700 -> 14; 2000 -> 15; 2400 -> 16; 3000 -> 17
             else -> 0
         }
         else -> -1  // AM, FM, FMN, PKTFM: no SH filter control

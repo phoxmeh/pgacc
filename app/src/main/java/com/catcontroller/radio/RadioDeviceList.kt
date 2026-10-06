@@ -37,6 +37,8 @@ data class RigCaps(
     val hasAgc: Boolean = true,
     val hasSplit: Boolean = true,
     val bandwidthsByMode: Map<RadioMode, List<Int>> = emptyMap(),
+    val minPowerWatts: Int = 5,
+    val maxPowerWatts: Int = 100,
 )
 
 data class RadioDevice(
@@ -350,15 +352,35 @@ object RadioDeviceList {
         RadioDevice(2106, "Elecraft", "KX3", CatProtocol.ELECRAFT, 9600,  caps = elecraftBase),
     )
 
+    // QDX — sourced from flrig QDX.cxx (vQDXmodes_: "LSB","USB"; fixed 3200 Hz filter,
+    // no CAT-adjustable power — QRP Labs spec is a fixed ~5W nominal output).
+    private val qdxBw = listOf(3200)
+    private val qdxCaps = kenwoodBase.copy(
+        modes = listOf(RadioMode.LSB, RadioMode.USB),
+        bandwidthsByMode = mapOf(RadioMode.LSB to qdxBw, RadioMode.USB to qdxBw),
+        hasNoiseBlanker = false, hasNoiseReduction = false, hasAutoNotch = false,
+        hasIfShift = false, hasSpeechProc = false, hasVox = false, hasTuner = false,
+        preampLevels = listOf(PreampLevel.OFF), attLevels = listOf(AttLevel.OFF),
+        antennaCount = 1, hasMicGain = false, hasRfGain = false, hasSquelch = false,
+        hasAgc = false, hasCw = false,
+        minPowerWatts = 1, maxPowerWatts = 5,
+    )
+
+    // QMX — sourced from flrig QMX.cxx (QMXmodes_: "LSB","USB","CW-U","CW-L","DIGIU","DIGIL").
+    // QRP Labs spec is a fixed ~10W nominal output, not CAT-adjustable.
+    private val qmxCaps = kenwoodBase.copy(
+        modes = listOf(RadioMode.LSB, RadioMode.USB, RadioMode.CW, RadioMode.CWR,
+            RadioMode.PKTUSB, RadioMode.PKTLSB),
+        hasNoiseBlanker = false, hasNoiseReduction = false, hasAutoNotch = false,
+        hasIfShift = false, hasSpeechProc = false, hasVox = false, hasTuner = false,
+        preampLevels = listOf(PreampLevel.OFF), attLevels = listOf(AttLevel.OFF),
+        antennaCount = 1, hasMicGain = false, hasRfGain = false, hasSquelch = false,
+        hasAgc = false, hasCw = true,
+        minPowerWatts = 1, maxPowerWatts = 10,
+    )
+
     private val qrpLabs = listOf(
-        RadioDevice(2200, "QRP Labs", "QDX",      CatProtocol.KENWOOD, 115200, caps = kenwoodBase.copy(
-            modes = listOf(RadioMode.USB, RadioMode.PKTUSB),
-            hasNoiseBlanker = false, hasNoiseReduction = false, hasAutoNotch = false,
-            hasIfShift = false, hasSpeechProc = false, hasVox = false, hasTuner = false,
-            preampLevels = listOf(PreampLevel.OFF), attLevels = listOf(AttLevel.OFF),
-            antennaCount = 1, hasMicGain = false, hasRfGain = false, hasSquelch = false,
-            hasAgc = false, hasCw = false,
-        )),
+        RadioDevice(2200, "QRP Labs", "QDX",      CatProtocol.KENWOOD, 115200, caps = qdxCaps),
         RadioDevice(2201, "QRP Labs", "QCX-mini", CatProtocol.KENWOOD, 9600, caps = kenwoodBase.copy(
             modes = listOf(RadioMode.CW),
             hasNoiseBlanker = false, hasNoiseReduction = false, hasAutoNotch = false,
@@ -366,15 +388,9 @@ object RadioDeviceList {
             preampLevels = listOf(PreampLevel.OFF), attLevels = listOf(AttLevel.OFF),
             antennaCount = 1, hasMicGain = false, hasRfGain = false, hasSquelch = false,
             hasAgc = false,
+            minPowerWatts = 1, maxPowerWatts = 3,
         )),
-        RadioDevice(2202, "QRP Labs", "QMX",      CatProtocol.KENWOOD, 115200, caps = kenwoodBase.copy(
-            modes = listOf(RadioMode.USB, RadioMode.PKTUSB),
-            hasNoiseBlanker = false, hasNoiseReduction = false, hasAutoNotch = false,
-            hasIfShift = false, hasSpeechProc = false, hasVox = false, hasTuner = false,
-            preampLevels = listOf(PreampLevel.OFF), attLevels = listOf(AttLevel.OFF),
-            antennaCount = 1, hasMicGain = false, hasRfGain = false, hasSquelch = false,
-            hasAgc = false, hasCw = false,
-        )),
+        RadioDevice(2202, "QRP Labs", "QMX",      CatProtocol.KENWOOD, 115200, caps = qmxCaps),
     )
 
     private val tentec = listOf(

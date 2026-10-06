@@ -44,6 +44,7 @@ class MainViewModel @Inject constructor(
     val isTuning: StateFlow<Boolean> = _isTuning.asStateFlow()
     private var preTuneMode: RadioMode? = null
     private var preTunePower: Int? = null
+    private var lastFreqEditMs = 0L
 
     val caps: StateFlow<RigCaps> = combine(activeDevice, _capsOverride) { device, override ->
         val static = device?.caps ?: RigCaps()
@@ -99,7 +100,14 @@ class MainViewModel @Inject constructor(
 
             stateJob?.cancel()
             stateJob = driver!!.state
-                .onEach { _driverState.value = it }
+                .onEach { incoming ->
+                    // Suppress poll-driven freq resets for a grace window after a manual edit —
+                    // the poll's IF; response can reflect a frequency read before a just-sent
+                    // FA/FB command has taken effect on the radio, causing a visible snap-back.
+                    _driverState.value = if (System.currentTimeMillis() - lastFreqEditMs < 800L) {
+                        incoming.copy(freqA = _driverState.value.freqA, freqB = _driverState.value.freqB)
+                    } else incoming
+                }
                 .launchIn(viewModelScope)
 
             // For rigctld, subscribe to live-discovered caps from \dump_caps
@@ -117,6 +125,11 @@ class MainViewModel @Inject constructor(
             _driverState.value = _driverState.value.copy(connecting = true, error = null)
             val result = d.connect()
             if (result.isSuccess) {
+                // Clamp displayed power into this rig's real range — a leftover value from a
+                // previously connected rig (or the default) may be out of range for this one.
+                val range = caps.value.minPowerWatts..caps.value.maxPowerWatts
+                val clamped = _driverState.value.rfPower.coerceIn(range.first, range.last)
+                if (clamped != _driverState.value.rfPower) driver?.setRfPower(clamped)
                 startPolling()
             } else {
                 _driverState.value = _driverState.value.copy(
@@ -180,6 +193,7 @@ class MainViewModel @Inject constructor(
         }
         val step    = digitStep(digitPosition)
         val newFreq = (freq + step * delta).coerceAtLeast(0)
+        lastFreqEditMs = System.currentTimeMillis()
         // Update display immediately so tap feels responsive whether or not connected
         _driverState.value = when (state.activeVfo) {
             Vfo.B, Vfo.SUB -> state.copy(freqB = newFreq)
@@ -189,10 +203,20 @@ class MainViewModel @Inject constructor(
     }
 
     fun setFrequencyDirect(freq: Long) {
-        viewModelScope.launch { driver?.setFrequency(freq, _driverState.value.activeVfo) }
+        lastFreqEditMs = System.currentTimeMillis()
+        val state = _driverState.value
+        _driverState.value = when (state.activeVfo) {
+            Vfo.B, Vfo.SUB -> state.copy(freqB = freq)
+            else           -> state.copy(freqA = freq)
+        }
+        viewModelScope.launch { driver?.setFrequency(freq, state.activeVfo) }
     }
 
-    fun setMode(mode: RadioMode)          = viewModelScope.launch { driver?.setMode(mode) }
+    fun setMode(mode: RadioMode) = viewModelScope.launch {
+        driver?.setMode(mode)
+        // If the new mode only has one bandwidth option, there's nothing to pick — apply it.
+        caps.value.bandwidthsByMode[mode]?.singleOrNull()?.let { driver?.setBandwidth(it) }
+    }
     fun setBandwidth(bw: Int)             = viewModelScope.launch { driver?.setBandwidth(bw) }
     fun setPtt(active: Boolean)           = viewModelScope.launch { driver?.setPtt(active) }
     fun setSplit(enabled: Boolean)        = viewModelScope.launch { driver?.setSplit(enabled) }

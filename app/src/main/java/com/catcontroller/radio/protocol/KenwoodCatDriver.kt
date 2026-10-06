@@ -263,6 +263,14 @@ class KenwoodCatDriver(
         // IF; gives a comprehensive status in one response
         val resp = sendCommand("IF;").getOrDefault("")
         parseIfResponse(resp)
+        // Mode is queried separately via MD; rather than trusting IF's embedded mode byte —
+        // per flrig's QDX.cxx get_IF(), some rigs (QRP Labs QDX) always report a fixed mode
+        // code there regardless of actual mode, which would otherwise snap the UI back.
+        sendCommand("MD;").getOrDefault("").let { r ->
+            if (r.startsWith("MD") && r.length >= 3) {
+                r[2].digitToIntOrNull()?.let { code -> updateState { copy(mode = kenwoodModeFromCode(code)) } }
+            }
+        }
     }
 
     private fun parseIfResponse(resp: String) {
@@ -274,14 +282,12 @@ class KenwoodCatDriver(
             val ritHz = resp.substring(13, 19).trim().toIntOrNull() ?: 0
             val ritOn = resp.getOrNull(19) == '1'
             val xitOn = resp.getOrNull(20) == '1'
-            val modeCode = resp.getOrNull(27)?.digitToIntOrNull() ?: 3
             updateState {
                 copy(
                     freqA = freq,
                     rit = ritHz,
                     ritEnabled = ritOn,
                     xitEnabled = xitOn,
-                    mode = kenwoodModeFromCode(modeCode),
                 )
             }
         }

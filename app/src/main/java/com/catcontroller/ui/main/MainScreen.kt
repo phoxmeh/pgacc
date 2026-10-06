@@ -114,7 +114,7 @@ fun MainScreen(
 
                 val isFmMode = state.mode in setOf(RadioMode.FM, RadioMode.FMN, RadioMode.WFM, RadioMode.C4FM)
                 CardSection {
-                    LabeledSlider("PWR", state.rfPower, 5, 100, "%3dW") { vm.setRfPower(it) }
+                    LabeledSlider("PWR", state.rfPower, caps.minPowerWatts, caps.maxPowerWatts, "%3dW") { vm.setRfPower(it) }
                     LabeledSlider("AF",  state.afGain,  0, 100, "%3d")  { vm.setAfGain(it) }
                     if (isFmMode) {
                         if (caps.hasSquelch) LabeledSlider("SQL", state.squelch, 0, 100, "%3d") { vm.setSquelch(it) }
@@ -543,7 +543,7 @@ private fun ModeRow(
                 ToggleChip(modeDisplayLabels[m] ?: m.displayLabel, mode == m) { onMode(m) }
             }
         }
-        if (hasBandwidth && bandwidths.isNotEmpty()) {
+        if (hasBandwidth && bandwidths.size > 1) {
             Spacer(Modifier.height(4.dp))
             var bwExpanded by remember { mutableStateOf(false) }
             Row(
